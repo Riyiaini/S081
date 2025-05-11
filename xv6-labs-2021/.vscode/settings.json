@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.asm": "asm-collection",
+        "user.h": "c",
+        "types.h": "c",
+        "stat.h": "c"
+    }
+}
