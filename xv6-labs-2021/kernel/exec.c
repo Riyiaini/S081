@@ -24,8 +24,20 @@ exec(char *path, char **argv)
   begin_op();
 
   if((ip = namei(path)) == 0){
-    end_op();
-    return -1;
+    char *p = path + sizeof(path), *pre = p;
+    *(p+1) = '\0';
+    while(p >= path){
+      if(*p == '/')
+        goto no;
+      *pre = *--p;
+      --pre;
+    }
+    *path = '/';
+    if((ip = namei(path)) == 0){
+      no:
+      end_op();
+      return -1;
+    }
   }
   ilock(ip);
 

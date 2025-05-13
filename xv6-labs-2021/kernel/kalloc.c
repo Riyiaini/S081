@@ -21,108 +21,13 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
-  int freelen;
-} kmem[NCPU];
+} kmem;
 
 void
 kinit()
 {
-  char lockname[7];
-  for(int i = 0; i < NCPU; i++) {
-    snprintf(lockname, sizeof(lockname), "kmem_%d", i);
-    initlock(&kmem[i].lock, lockname);
-    kmem[i].freelen = 0;
-  }
+  initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
-}
-
-struct run*
-reschedule(int id)
-{
-  if(!holding(&kmem[id].lock))
-    panic("rechedule lock error1");
-
-  if(kmem[id].freelist)
-    return (struct run*)0;
-
-  int maxid = -1, maxlen = 0;
-  for(int i = 0; i < NCPU; i++) {
-    if(i == id)
-      continue;
-    acquire(&kmem[i].lock);
-    if(kmem[i].freelen > maxlen) {
-      if(maxid != -1)
-        release(&kmem[maxid].lock);
-      maxlen = kmem[i].freelen;
-      maxid = i;
-    }
-    else
-      release(&kmem[i].lock);
-  }
-  if(maxid == -1)
-    return (struct run*)0;
-
-  if(!holding(&kmem[maxid].lock))
-    panic("rechedule lock error2");
-
-  struct run *r = kmem[maxid].freelist;
-
-  if(r) {
-    struct run *fp = r;
-    while(fp && fp->next) {
-      fp = fp->next->next;
-      r = r->next;
-    }
-    if(r == kmem[maxid].freelist) {
-      kmem[maxid].freelist = 0;
-      kmem[maxid].freelen = 0;
-      kmem[id].freelist = 0;
-      kmem[id].freelen = 0;
-      release(&kmem[maxid].lock);
-      return r;
-    }
-    kmem[id].freelist = kmem[maxid].freelist;
-    kmem[maxid].freelist = r->next;
-    r->next = 0;
-    if((kmem[maxid].freelen % 2) == 0) {
-      kmem[maxid].freelen = kmem[maxid].freelen / 2 - 1;
-      kmem[id].freelen = kmem[maxid].freelen + 1;
-    }else {
-      kmem[maxid].freelen = kmem[maxid].freelen / 2;
-      kmem[id].freelen = kmem[maxid].freelen;
-    }
-    release(&kmem[maxid].lock);
-    r = kmem[id].freelist;
-    kmem[id].freelist = r->next;
-    return r;
-  }
-
-  release(&kmem[maxid].lock);
-  return (struct run*)0;
-}
-
-
-void checklen(int id)
-{
-  struct run *r;
-  int len = 0;
-  for(int i = 0; i < NCPU; i++)
-  {
-    if(i != id)
-      acquire(&kmem[i].lock);
-    r = kmem[i].freelist;
-    while(r) {
-      r = r->next;
-      len ++;
-    }
-    if(len != kmem[i].freelen) {
-      printf("cpu: %d, real: %d, freelen: %d\n", i, len, kmem[i].freelen);
-      panic("checklen not match\n");
-    }
-    if(i != id)
-      release(&kmem[i].lock);
-    len = 0;
-  }
 }
 
 void
@@ -151,16 +56,10 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  push_off();
-  int cpu = cpuid();
-
-  acquire(&kmem[cpu].lock);
-  r->next = kmem[cpu].freelist;
-  kmem[cpu].freelist = r;
-  ++kmem[cpu].freelen;
-  release(&kmem[cpu].lock);
-
-  pop_off();
+  acquire(&kmem.lock);
+  r->next = kmem.freelist;
+  kmem.freelist = r;
+  release(&kmem.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -171,24 +70,13 @@ kalloc(void)
 {
   struct run *r;
 
-  push_off();
-  int cpu = cpuid();
-
-  acquire(&kmem[cpu].lock);
-  r = kmem[cpu].freelist;
-  if(r) {
-    kmem[cpu].freelist = r->next;
-    --kmem[cpu].freelen;
-  }
-  else
-    r = reschedule(cpu);
-
-  release(&kmem[cpu].lock);
-
-  pop_off();
+  acquire(&kmem.lock);
+  r = kmem.freelist;
+  if(r)
+    kmem.freelist = r->next;
+  release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
-
