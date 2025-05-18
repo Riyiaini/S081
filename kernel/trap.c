@@ -5,6 +5,9 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fcntl.h"
+#include "file.h"
+#include "fs.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -49,8 +52,9 @@ usertrap(void)
   
   // save user program counter.
   p->trapframe->epc = r_sepc();
+  uint64 scause = r_scause();
   
-  if(r_scause() == 8){
+  if(scause == 8){
     // system call
 
     if(p->killed)
@@ -65,10 +69,89 @@ usertrap(void)
     intr_on();
 
     syscall();
+  } else if(scause == 15){
+    // page fault
+
+    uint64 addr = r_stval();
+    if(addr >= MAXVA || (addr < p->ustack && addr >= p->ustack - PGSIZE)){
+      p->killed = 1;
+
+    } else if(addr < VMATOP && addr >= p->vmatop){
+
+      struct vma *vp = 0;
+      // check if the address is in a valid vma
+      for(int i = 0; i < NVMA; i++){
+        if(addr >= p->vmas[i].vastart && addr < p->vmas[i].vastart + p->vmas[i].length){
+          if(p->vmas[i].valid == 0){
+            p->killed = 1;
+            goto failed;
+          } else {
+            vp = &p->vmas[i];
+          }
+          break;
+        }
+      }
+      // find
+      if(vp != 0){
+        uint64 va = PGROUNDDOWN(addr);
+        pte_t *pte = walk(p->pagetable, va, 0);
+        uint flag;
+        // read the flags
+        if(vp->prot & PROT_READ)
+          flag = PTE_R;
+        if(vp->prot & PROT_WRITE)
+          flag |= PTE_W;
+        
+        if(vp->flags == MAP_PRIVATE){
+          // allocate a new page
+          uint64 pa = (uint64)kalloc();
+          if(pa == 0){
+            p->killed = 1;
+            goto failed;
+          } else {
+            struct inode *ip = vp->f->ip;
+            uint offset = addr - vp->vastart + vp->offset;
+            ilock(ip);
+            if(readi(ip, 0, pa, offset, PGSIZE) != PGSIZE){
+              p->killed = 1;
+              kfree((void*)pa);
+              goto failed;
+            }
+            iunlock(ip);
+            // map the page
+            if(mappages(p->pagetable, va, PGSIZE, pa, flag) < 0){
+              p->killed = 1;
+              kfree((void*)pa);
+              goto failed;
+            }
+          }
+        }
+        else if(vp->flags == MAP_SHARED){
+          
+          struct inode *ip = vp->f->ip;
+          uint offset = addr - vp->vastart + vp->offset;
+          uint addr = bmap(ip, offset / BSIZE);
+          if(addr == 0){
+            p->killed = 1;
+            goto failed;
+          }
+          // map the page
+          if(mappages(p->pagetable, va, PGSIZE, addr, flag) < 0){
+            p->killed = 1;
+            goto failed;
+          }
+        }
+      }
+      if(p->killed){
+        failed:
+        // unmap the page
+      }
+    }
+    
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    printf("usertrap(): unexpected scause %p pid=%d\n", scause, p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
   }

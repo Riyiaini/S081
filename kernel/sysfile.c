@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "memlayout.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -483,4 +484,57 @@ sys_pipe(void)
     return -1;
   }
   return 0;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr, len, offset;
+  int fd, prot, flags;
+  struct file *f;
+  if(argaddr(0, &addr) < 0 || argaddr(1, &len) < 0 ||
+     argint(2, &prot) < 0 || argint(3, &flags) < 0 ||
+     argfd(4, &fd, &f) < 0 || argaddr(5, &offset) < 0)
+    return -1;
+
+  if((!f->readable && (prot & PROT_READ)) ||
+     (!f->writable && (prot & PROT_WRITE) && !(flags & MAP_PRIVATE)))
+    return -1;
+
+  len = PGROUNDUP(len);
+  struct proc *p = myproc();
+  struct vma *vp = 0;
+  uint64 vmatop = p->vmatop;
+
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].valid == 0){
+      vp = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(vp == 0)
+    return -1;
+  if(p->vmatop -len <= p->ustack + PGSIZE)
+    return -1;
+
+  p->vmatop -= len;
+
+  vp->length = len;
+  vp->vastart = p->vmatop;
+  vp->valid = 1;
+  vp->prot = prot;
+  vp->flags = flags;
+  vp->f = f;
+  vp->offset = 0; // offset is not used in mmap
+
+  filedup(f);
+
+  return vp->vastart;
+}
+
+uint64
+sys_munmap(void)
+{
+  return -1;
 }

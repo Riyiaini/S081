@@ -54,6 +54,9 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
   }
+  for(int i = 0; i < NVMA; i++) {
+    p->vmas[i].valid = 0;
+  }
 }
 
 // Must be called with interrupts disabled,
@@ -140,6 +143,7 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
+  p->vmatop = VMATOP;
 
   return p;
 }
