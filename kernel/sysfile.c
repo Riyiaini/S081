@@ -504,7 +504,6 @@ sys_mmap(void)
   len = PGROUNDUP(len);
   struct proc *p = myproc();
   struct vma *vp = 0;
-  uint64 vmatop = p->vmatop;
 
   for(int i = 0; i < NVMA; i++){
     if(p->vmas[i].valid == 0){
@@ -517,7 +516,7 @@ sys_mmap(void)
     return -1;
   if(p->vmatop -len <= p->ustack + PGSIZE)
     return -1;
-
+    
   p->vmatop -= len;
 
   vp->length = len;
@@ -536,5 +535,70 @@ sys_mmap(void)
 uint64
 sys_munmap(void)
 {
-  return -1;
+  uint64 addr, len;
+  if(argaddr(0, &addr) < 0 || argaddr(1, &len) < 0 || len <= 0 || addr % PGSIZE != 0)
+    return -1;
+
+  struct vma *vp = 0;
+  struct proc *p = myproc();
+  int i;
+  for(i = 0; i < NVMA; i++) {
+    if(p->vmas[i].vastart <= addr && (p->vmas[i].vastart + p->vmas[i].length) > addr && 
+       p->vmas[i].valid == 1) {
+      vp = &p->vmas[i];
+      break;
+    }
+  }
+
+  if(p == 0)
+    return -1;
+
+  len = PGROUNDUP(len);
+  if(vp->vastart + vp->length < addr + len)
+    len = vp->vastart + vp->length - addr;
+
+  if(vmaunmap(p->pagetable, addr, len, vp) < 0){
+    return -1;
+  }
+  if(vp->vastart < addr && vp->vastart + vp->length > addr + len)
+  {
+    //printf("1\n");
+    struct vma *nvp = 0;
+    for(int i = 0; i < NVMA; i++) {
+      if(p->vmas[i].valid == 0){
+        nvp = &p->vmas[i];
+        break;
+      }
+    }
+    if(nvp == 0)
+      return -1;
+    nvp->vastart = addr + len;
+    nvp->length = vp->vastart + vp->length - addr - len;
+    nvp->valid = 1;
+    nvp->prot = vp->prot;
+    nvp->flags = vp->flags;
+    nvp->f = vp->f;
+    nvp->offset = vp->offset + (addr + len - vp->vastart);
+
+    filedup(vp->f);
+    vp->length = addr - vp->vastart;
+  }
+  else if(vp->vastart == addr && vp->length == len) {
+    vp->valid = 0;
+    vp->length = 0;
+    vp->f = 0;
+  }
+  else if(vp->vastart == addr && vp->length > len) {
+    vp->length -= len;
+    vp->vastart += len;
+    vp->offset += len;
+  }
+  else if(vp->vastart < addr ) {
+    //printf("4\n");
+    vp->length = addr - vp->vastart;
+  }
+  else
+    return -1;
+  return 0;
 }
+

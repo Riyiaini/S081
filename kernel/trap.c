@@ -6,8 +6,10 @@
 #include "proc.h"
 #include "defs.h"
 #include "fcntl.h"
-#include "file.h"
+#include "sleeplock.h"
 #include "fs.h"
+#include "file.h"
+
 
 struct spinlock tickslock;
 uint ticks;
@@ -69,7 +71,7 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if(scause == 15){
+  } else if(scause == 13 || scause == 15){
     // page fault
 
     uint64 addr = r_stval();
@@ -91,59 +93,46 @@ usertrap(void)
           break;
         }
       }
+      //printf("addr find %p\n", (void*)addr);
       // find
-      if(vp != 0){
-        uint64 va = PGROUNDDOWN(addr);
-        pte_t *pte = walk(p->pagetable, va, 0);
-        uint flag;
-        // read the flags
-        if(vp->prot & PROT_READ)
-          flag = PTE_R;
-        if(vp->prot & PROT_WRITE)
-          flag |= PTE_W;
-        
-        if(vp->flags == MAP_PRIVATE){
-          // allocate a new page
-          uint64 pa = (uint64)kalloc();
-          if(pa == 0){
-            p->killed = 1;
-            goto failed;
-          } else {
-            struct inode *ip = vp->f->ip;
-            uint offset = addr - vp->vastart + vp->offset;
-            ilock(ip);
-            if(readi(ip, 0, pa, offset, PGSIZE) != PGSIZE){
-              p->killed = 1;
-              kfree((void*)pa);
-              goto failed;
-            }
-            iunlock(ip);
-            // map the page
-            if(mappages(p->pagetable, va, PGSIZE, pa, flag) < 0){
-              p->killed = 1;
-              kfree((void*)pa);
-              goto failed;
-            }
-          }
-        }
-        else if(vp->flags == MAP_SHARED){
-          
-          struct inode *ip = vp->f->ip;
-          uint offset = addr - vp->vastart + vp->offset;
-          uint addr = bmap(ip, offset / BSIZE);
-          if(addr == 0){
-            p->killed = 1;
-            goto failed;
-          }
-          // map the page
-          if(mappages(p->pagetable, va, PGSIZE, addr, flag) < 0){
-            p->killed = 1;
-            goto failed;
-          }
-        }
+      uint64 va = addr;
+      uint flag = PTE_U;
+      // read the flags
+      if(vp->prot & PROT_READ)
+        flag |= PTE_R;
+      if(vp->prot & PROT_WRITE)
+        flag |= PTE_W;
+      
+      // allocate a new page
+      uint64 pa;
+      if((pa = (uint64)kalloc()) == 0){
+        p->killed = 1;
+        goto failed;
+      }
+      memset((void *)pa, 0, PGSIZE);
+      struct inode *ip = vp->f->ip;
+      uint offset = va - vp->vastart + vp->offset;
+
+      ilock(ip);
+      /* int readsize = ip->size - offset < PGSIZE ? ip->size - offset : PGSIZE;
+      if(readi(ip, 0, pa, offset, readsize) != readsize){
+        p->killed = 1;
+        kfree((void*)pa);
+        iunlock(ip);
+        goto failed;
+      } */
+      readi(ip, 0, pa, offset, PGSIZE);
+      iunlock(ip);
+
+      // map the page
+      if(mappages(p->pagetable, va, PGSIZE, pa, flag) < 0){
+        p->killed = 1;
+        kfree((void*)pa);
+        goto failed;
       }
       if(p->killed){
         failed:
+        p->killed = 1;
         // unmap the page
       }
     }

@@ -5,6 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "proc.h"
+#include "fcntl.h"
+#include "file.h"
 
 /*
  * the kernel's page table.
@@ -432,3 +437,50 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+int             
+vmaunmap(pagetable_t pagetable, uint64 va, uint64 sz, struct vma* vp)
+{
+  struct inode *ip = vp->f->ip;
+  uint64 pa;
+  int m = 0, off = vp->offset, fend = 0;
+  pte_t *pte;
+  if((va % PGSIZE) != 0 || (sz % PGSIZE) != 0)
+    return -1;
+
+  while(sz > 0){
+    
+    if((pte = walk(pagetable, va, 0)) == 0 || (*pte & PTE_V) == 0){
+      return 0;
+    }
+    if((*pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      panic("vmaunmap: leaf");
+    pa = PTE2PA(*pte);
+    if(!fend && vp->flags & MAP_SHARED && *pte & PTE_D){
+      // write back the page to the file
+      
+      m = (ip->size - off) > PGSIZE ? PGSIZE : ip->size - off;
+      if(m > 0) {
+        begin_op();
+        ilock(ip);
+        if(writei(ip, 1, va, off, m) < m){
+          return -1;
+        }
+        //printf("writei: %d, %d, %d, %d\n", ip->inum, va, off, m);
+        iunlock(ip);
+        end_op();
+        off += m;
+      }
+      else
+        fend = 1;
+    }
+    kfree((void *)pa);
+    *pte = 0;
+    
+    va += PGSIZE;
+    sz -= PGSIZE;
+  }
+  if(vp->length == sz && vp->vastart == va)
+    fileclose(vp->f);
+  return 0;
+};

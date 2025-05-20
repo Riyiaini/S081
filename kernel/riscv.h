@@ -322,7 +322,13 @@ r_ra()
   asm volatile("mv %0, ra" : "=r" (x) );
   return x;
 }
-
+static inline uint64
+r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, fp" : "=r" (x) );
+  return x;
+}
 // flush the TLB.
 static inline void
 sfence_vma()
@@ -343,6 +349,7 @@ sfence_vma()
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // 1 -> user can access
+#define PTE_D (1L << 7) // dirty
 
 // shift a physical address to the right place for a PTE.
 #define PA2PTE(pa) ((((uint64)pa) >> 12) << 10)

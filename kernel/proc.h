@@ -117,5 +117,5 @@ struct proc {
   char name[16];               // Process name (debugging)
   struct vma vmas[NVMA];       // Virtual memory areas
   uint64 ustack;               // User stack base
-  uint64 vmatop                // top of the free vma pages
+  uint64 vmatop;                // top of the free vma pages
 };

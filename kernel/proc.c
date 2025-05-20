@@ -54,9 +54,6 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
   }
-  for(int i = 0; i < NVMA; i++) {
-    p->vmas[i].valid = 0;
-  }
 }
 
 // Must be called with interrupts disabled,
@@ -138,6 +135,9 @@ found:
     return 0;
   }
 
+  for(int i = 0; i < NVMA; i++){
+    p->vmas[i].valid = 0;
+  }
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -157,6 +157,12 @@ freeproc(struct proc *p)
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
+  for(int i = 0; i < NVMA; i++) {
+    if(p->vmas[i].valid == 1){
+      vmaunmap(p->pagetable, p->vmas[i].vastart, p->vmas[i].length, &p->vmas[i]);
+      p->vmas[i].valid = 0;
+    }
+  }
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   p->pagetable = 0;
@@ -284,7 +290,8 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
-
+  np->vmatop = p->vmatop;
+  
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -304,6 +311,13 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  for(int i = 0; i < NVMA; i++){
+    if(p->vmas[i].valid == 1) {
+      np->vmas[i] = p->vmas[i];
+      filedup(p->vmas[i].f);
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
