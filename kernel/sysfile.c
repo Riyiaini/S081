@@ -562,7 +562,6 @@ sys_munmap(void)
   }
   if(vp->vastart < addr && vp->vastart + vp->length > addr + len)
   {
-    //printf("1\n");
     struct vma *nvp = 0;
     for(int i = 0; i < NVMA; i++) {
       if(p->vmas[i].valid == 0){
@@ -594,7 +593,6 @@ sys_munmap(void)
     vp->offset += len;
   }
   else if(vp->vastart < addr ) {
-    //printf("4\n");
     vp->length = addr - vp->vastart;
   }
   else
